@@ -14,7 +14,7 @@ logging.basicConfig(level=logging.INFO)
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(bot)
 
-waiting_for_reply = {}
+waiting_for_reply = {}  # {admin_id: user_id}
 
 def admin_keyboard(user_id):
     kb = InlineKeyboardMarkup(row_width=1)
@@ -46,7 +46,7 @@ async def send_to_user(message: types.Message):
     try:
         user_id = int(parts[1])
         text = parts[2]
-        await bot.send_message(user_id, text)
+        await bot.send_message(user_id, f"📨 {text}")
         await message.answer(f"✅ Отправлено пользователю {user_id}")
     except Exception as e:
         await message.answer(f"❌ Ошибка: {e}")
@@ -74,12 +74,16 @@ async def handle_user(message: types.Message):
 
 @dp.callback_query_handler(lambda c: c.data.startswith('reply_'))
 async def reply_start(callback: types.CallbackQuery):
+    print(f"🔍 Нажата кнопка reply: {callback.data}")
+    
     if callback.from_user.id != ADMIN_ID:
         await callback.answer("Нет доступа", show_alert=True)
         return
     
     user_id = int(callback.data.split('_')[1])
     waiting_for_reply[ADMIN_ID] = user_id
+    
+    print(f"✅ Сохранено: waiting_for_reply[{ADMIN_ID}] = {user_id}")
     
     await callback.message.answer(f"✍️ Введите ответ для пользователя {user_id}:")
     await callback.answer()
@@ -103,30 +107,37 @@ async def close_dialog(callback: types.CallbackQuery):
     await callback.message.answer(f"✅ Диалог с {user_id} закрыт")
     await callback.answer()
 
-@dp.message_handler(lambda m: m.from_user.id == ADMIN_ID and ADMIN_ID in waiting_for_reply)
-async def send_reply(message: types.Message):
-    user_id = waiting_for_reply.pop(ADMIN_ID, None)
+@dp.message_handler(lambda m: m.from_user.id == ADMIN_ID)
+async def handle_admin_message(message: types.Message):
+    print(f"🔍 Сообщение от админа: {message.text}")
     
-    if not user_id:
-        await message.answer("❌ Ошибка. Сначала нажми 'Ответить' на сообщении.")
-        return
-    
-    try:
-        if message.text:
-            await bot.send_message(user_id, f"📨 Ответ: {message.text}")
-        elif message.photo:
-            await bot.send_photo(user_id, message.photo[-1].file_id, caption="📨 Ответ:")
-        else:
-            await bot.send_message(user_id, "📨 Ответ получен")
+    # Проверяем, есть ли ожидающий ответ
+    if ADMIN_ID in waiting_for_reply:
+        user_id = waiting_for_reply.pop(ADMIN_ID)
+        print(f"✅ Отправляем ответ пользователю {user_id}")
         
-        await message.answer(f"✅ Отправлено пользователю {user_id}")
-        
-        kb = InlineKeyboardMarkup(row_width=1)
-        kb.add(InlineKeyboardButton("✅ Закрыть", callback_data=f"close_{user_id}"))
-        await message.answer("Закрыть диалог?", reply_markup=kb)
-        
-    except Exception as e:
-        await message.answer(f"❌ Ошибка: {e}")
+        try:
+            if message.text:
+                await bot.send_message(user_id, f"📨 Ответ: {message.text}")
+            elif message.photo:
+                await bot.send_photo(user_id, message.photo[-1].file_id, caption="📨 Ответ:")
+            elif message.video:
+                await bot.send_video(user_id, message.video.file_id, caption="📨 Ответ:")
+            else:
+                await bot.send_message(user_id, "📨 Ответ получен")
+            
+            await message.answer(f"✅ Отправлено пользователю {user_id}")
+            
+            kb = InlineKeyboardMarkup(row_width=1)
+            kb.add(InlineKeyboardButton("✅ Закрыть", callback_data=f"close_{user_id}"))
+            await message.answer("Закрыть диалог?", reply_markup=kb)
+            
+        except Exception as e:
+            await message.answer(f"❌ Ошибка: {e}")
+    else:
+        # Если нет ожидающего ответа, просто игнорируем
+        if message.text and not message.text.startswith('/'):
+            print(f"⚠️ Нет ожидающего ответа, сообщение проигнорировано")
 
 if __name__ == '__main__':
     print("🤖 Бот запущен!")
