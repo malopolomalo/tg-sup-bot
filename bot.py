@@ -60,6 +60,10 @@ async def handle_user(message: types.Message):
         await bot.send_photo(ADMIN_ID, message.photo[-1].file_id, caption=text, reply_markup=admin_keyboard(user.id))
     elif message.video:
         await bot.send_video(ADMIN_ID, message.video.file_id, caption=text, reply_markup=admin_keyboard(user.id))
+    elif message.document:
+        await bot.send_document(ADMIN_ID, message.document.file_id, caption=text, reply_markup=admin_keyboard(user.id))
+    elif message.voice:
+        await bot.send_voice(ADMIN_ID, message.voice.file_id, caption=text, reply_markup=admin_keyboard(user.id))
 
 @dp.callback_query_handler(lambda c: c.data.startswith('reply_'))
 async def reply_start(callback: types.CallbackQuery):
