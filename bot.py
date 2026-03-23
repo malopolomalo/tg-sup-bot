@@ -1,8 +1,24 @@
 import logging
 import os
+from threading import Thread
+from flask import Flask
 from aiogram import Bot, Dispatcher, types
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils import executor
+
+# ========== HTTP-сервер для Render ==========
+flask_app = Flask(__name__)
+
+@flask_app.route('/')
+def health():
+    return "Bot is running!"
+
+def run_http():
+    port = int(os.environ.get("PORT", 10000))
+    flask_app.run(host='0.0.0.0', port=port)
+
+Thread(target=run_http).start()
+# ===========================================
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 ADMIN_ID = int(os.environ.get("ADMIN_ID"))
@@ -27,6 +43,33 @@ def admin_keyboard(user_id):
 @dp.message_handler(commands=['start'])
 async def start(message: types.Message):
     await message.answer("👋 Бот поддержки. Отправь сообщение, я передам админу.")
+
+@dp.message_handler(commands=['post'])
+async def send_post_button(message: types.Message):
+    if message.from_user.id != ADMIN_ID:
+        await message.answer("⛔ Нет доступа")
+        return
+    
+    if not CHANNEL_ID:
+        await message.answer("❌ CHANNEL_ID не задан")
+        return
+    
+    kb = InlineKeyboardMarkup(row_width=1)
+    me = await bot.get_me()
+    kb.add(InlineKeyboardButton("📩 Написать в поддержку", url=f"https://t.me/{me.username}"))
+    
+    try:
+        await bot.send_message(
+            CHANNEL_ID,
+            "❓ *Есть вопросы или проблемы?*\n\n"
+            "Нажми на кнопку ниже, чтобы связаться с поддержкой.\n"
+            "Ответим в ближайшее время!",
+            parse_mode="Markdown",
+            reply_markup=kb
+        )
+        await message.answer("✅ Кнопка отправлена в канал!")
+    except Exception as e:
+        await message.answer(f"❌ Ошибка: {e}")
 
 @dp.message_handler(commands=['send'])
 async def send_to_user(message: types.Message):
@@ -60,10 +103,6 @@ async def handle_user(message: types.Message):
         await bot.send_photo(ADMIN_ID, message.photo[-1].file_id, caption=text, reply_markup=admin_keyboard(user.id))
     elif message.video:
         await bot.send_video(ADMIN_ID, message.video.file_id, caption=text, reply_markup=admin_keyboard(user.id))
-    elif message.document:
-        await bot.send_document(ADMIN_ID, message.document.file_id, caption=text, reply_markup=admin_keyboard(user.id))
-    elif message.voice:
-        await bot.send_voice(ADMIN_ID, message.voice.file_id, caption=text, reply_markup=admin_keyboard(user.id))
 
 @dp.callback_query_handler(lambda c: c.data.startswith('reply_'))
 async def reply_start(callback: types.CallbackQuery):
