@@ -1,25 +1,10 @@
 import logging
 import os
-import asyncio
-from threading import Thread
-from flask import Flask
+from flask import Flask, request, jsonify
 from aiogram import Bot, Dispatcher, types
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils import executor
-
-# ========== HTTP-сервер для Render ==========
-flask_app = Flask(__name__)
-
-@flask_app.route('/')
-def health():
-    return "Bot is running!"
-
-def run_http():
-    port = int(os.environ.get("PORT", 10000))
-    flask_app.run(host='0.0.0.0', port=port, debug=False)
-
-Thread(target=run_http).start()
-# ===========================================
+import asyncio
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 ADMIN_ID = int(os.environ.get("ADMIN_ID"))
@@ -31,7 +16,8 @@ logging.basicConfig(level=logging.INFO)
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(bot)
 
-# Храним, кому отвечаем
+app = Flask(__name__)
+
 waiting_for_reply = {}
 
 def admin_keyboard(user_id):
@@ -42,6 +28,17 @@ def admin_keyboard(user_id):
     )
     return kb
 
+@app.route('/webhook', methods=['POST'])
+async def webhook():
+    update = types.Update.to_object(request.get_json())
+    await dp.process_update(update)
+    return 'OK'
+
+@app.route('/')
+def health():
+    return "Bot is running!"
+
+# Команды
 @dp.message_handler(commands=['start'])
 async def start(message: types.Message):
     await message.answer("👋 Бот поддержки. Отправь сообщение, я передам админу.")
@@ -101,7 +98,7 @@ async def reply_start(callback: types.CallbackQuery):
     user_id = int(callback.data.split('_')[1])
     waiting_for_reply[ADMIN_ID] = user_id
     
-    await callback.message.answer(f"✍️ Введите ответ для пользователя {user_id} (можно текст, фото, видео):")
+    await callback.message.answer(f"✍️ Введите ответ для пользователя {user_id}:")
     await callback.answer()
 
 @dp.callback_query_handler(lambda c: c.data.startswith('close_'))
@@ -128,11 +125,9 @@ async def handle_admin_message(message: types.Message):
     user_id = waiting_for_reply.pop(ADMIN_ID, None)
     
     if not user_id:
-        # Если нет активного ответа — игнорируем
         return
     
     try:
-        # Отправляем ответ в зависимости от типа
         if message.text:
             await bot.send_message(user_id, f"📨 *Ответ:*\n{message.text}", parse_mode="Markdown")
         elif message.photo:
@@ -143,19 +138,27 @@ async def handle_admin_message(message: types.Message):
             await bot.send_document(user_id, message.document.file_id, caption="📨 *Ответ:*", parse_mode="Markdown")
         elif message.voice:
             await bot.send_voice(user_id, message.voice.file_id)
-        else:
-            await bot.send_message(user_id, "📨 *Ответ:*", parse_mode="Markdown")
         
         await message.answer(f"✅ Отправлено пользователю {user_id}")
         
-        # Предлагаем закрыть диалог
         kb = InlineKeyboardMarkup(row_width=1)
         kb.add(InlineKeyboardButton("✅ Закрыть диалог", callback_data=f"close_{user_id}"))
-        await message.answer("Диалог завершен? Нажми кнопку:", reply_markup=kb)
+        await message.answer("Закрыть диалог?", reply_markup=kb)
         
     except Exception as e:
         await message.answer(f"❌ Ошибка: {e}")
 
+# Установка вебхука
+async def set_webhook():
+    await bot.delete_webhook()
+    webhook_url = f"https://{os.environ.get('RENDER_EXTERNAL_HOSTNAME')}/webhook"
+    await bot.set_webhook(webhook_url)
+    print(f"Webhook set to {webhook_url}")
+
 if __name__ == '__main__':
-    print("🤖 Бот запущен!")
-    executor.start_polling(dp, skip_updates=True)
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(set_webhook())
+    
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host='0.0.0.0', port=port)
