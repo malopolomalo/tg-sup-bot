@@ -1,8 +1,10 @@
 import logging
 import os
+import asyncio
 from threading import Thread
 from flask import Flask
 from aiogram import Bot, Dispatcher, types
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils import executor
 
 # ========== HTTP-сервер для Render ==========
@@ -14,7 +16,7 @@ def health():
 
 def run_http():
     port = int(os.environ.get("PORT", 10000))
-    flask_app.run(host='0.0.0.0', port=port)
+    flask_app.run(host='0.0.0.0', port=port, debug=False)
 
 Thread(target=run_http).start()
 # ===========================================
@@ -29,21 +31,25 @@ logging.basicConfig(level=logging.INFO)
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(bot)
 
-# Храним последнего пользователя
-last_user = {}
+# Храним, кому отвечаем
+waiting_for_reply = {}
+
+def admin_keyboard(user_id):
+    kb = InlineKeyboardMarkup(row_width=1)
+    kb.add(
+        InlineKeyboardButton("✍️ Ответить", callback_data=f"reply_{user_id}"),
+        InlineKeyboardButton("❌ Закрыть", callback_data=f"close_{user_id}")
+    )
+    return kb
 
 @dp.message_handler(commands=['start'])
 async def start(message: types.Message):
-    await message.answer(
-        "👋 Бот поддержки. Отправь сообщение, я передам админу.\n\n"
-        "Админ ответит командой:\n"
-        "/reply текст — последнему, кто писал\n"
-        "/reply 123456789 текст — конкретному пользователю"
-    )
+    await message.answer("👋 Бот поддержки. Отправь сообщение, я передам админу.")
 
 @dp.message_handler(commands=['post'])
 async def send_post_button(message: types.Message):
     if message.from_user.id != ADMIN_ID:
+        await message.answer("⛔ Нет доступа")
         return
     
     if not CHANNEL_ID:
@@ -51,8 +57,8 @@ async def send_post_button(message: types.Message):
         return
     
     me = await bot.get_me()
-    kb = types.InlineKeyboardMarkup()
-    kb.add(types.InlineKeyboardButton("📩 Написать в поддержку", url=f"https://t.me/{me.username}"))
+    kb = InlineKeyboardMarkup(row_width=1)
+    kb.add(InlineKeyboardButton("📩 Написать в поддержку", url=f"https://t.me/{me.username}"))
     
     try:
         await bot.send_message(
@@ -71,58 +77,82 @@ async def handle_user(message: types.Message):
         return
     
     user = message.from_user
-    last_user[ADMIN_ID] = user.id
-    
-    user_text = f"📩 От: {user.full_name}\nID: {user.id}\n\n"
+    msg_text = f"📩 От: {user.full_name}\nID: {user.id}\n\n"
     
     await message.answer("✅ Отправлено!")
     
     if message.text:
-        await bot.send_message(ADMIN_ID, user_text + message.text)
+        await bot.send_message(ADMIN_ID, msg_text + message.text, reply_markup=admin_keyboard(user.id))
     elif message.photo:
-        await bot.send_photo(ADMIN_ID, message.photo[-1].file_id, caption=user_text)
+        await bot.send_photo(ADMIN_ID, message.photo[-1].file_id, caption=msg_text, reply_markup=admin_keyboard(user.id))
     elif message.video:
-        await bot.send_video(ADMIN_ID, message.video.file_id, caption=user_text)
+        await bot.send_video(ADMIN_ID, message.video.file_id, caption=msg_text, reply_markup=admin_keyboard(user.id))
     elif message.document:
-        await bot.send_document(ADMIN_ID, message.document.file_id, caption=user_text)
+        await bot.send_document(ADMIN_ID, message.document.file_id, caption=msg_text, reply_markup=admin_keyboard(user.id))
     elif message.voice:
-        await bot.send_voice(ADMIN_ID, message.voice.file_id, caption=user_text)
-    
-    await bot.send_message(
-        ADMIN_ID,
-        f"💡 Чтобы ответить:\n/reply {user.id} текст\nили\n/reply текст (ответит последнему)"
-    )
+        await bot.send_voice(ADMIN_ID, message.voice.file_id, caption=msg_text, reply_markup=admin_keyboard(user.id))
 
-@dp.message_handler(commands=['reply'])
-async def reply_command(message: types.Message):
-    if message.from_user.id != ADMIN_ID:
+@dp.callback_query_handler(lambda c: c.data.startswith('reply_'))
+async def reply_start(callback: types.CallbackQuery):
+    if callback.from_user.id != ADMIN_ID:
+        await callback.answer("Нет доступа", show_alert=True)
         return
     
-    parts = message.text.split(maxsplit=2)
+    user_id = int(callback.data.split('_')[1])
+    waiting_for_reply[ADMIN_ID] = user_id
     
-    # Вариант 1: /reply текст (последнему)
-    if len(parts) == 2:
-        user_id = last_user.get(ADMIN_ID)
-        text = parts[1]
-        if not user_id:
-            await message.answer("❌ Нет активного диалога. Используй: /reply user_id текст")
-            return
+    await callback.message.answer(f"✍️ Введите ответ для пользователя {user_id} (можно текст, фото, видео):")
+    await callback.answer()
+
+@dp.callback_query_handler(lambda c: c.data.startswith('close_'))
+async def close_dialog(callback: types.CallbackQuery):
+    if callback.from_user.id != ADMIN_ID:
+        await callback.answer("Нет доступа", show_alert=True)
+        return
     
-    # Вариант 2: /reply user_id текст
-    elif len(parts) >= 3:
-        try:
-            user_id = int(parts[1])
-            text = parts[2]
-        except:
-            await message.answer("❌ Ошибка. Используй: /reply user_id текст")
-            return
-    else:
-        await message.answer("❌ Используй:\n/reply текст — ответит последнему\n/reply 123456789 текст — ответит конкретному")
+    user_id = int(callback.data.split('_')[1])
+    
+    if waiting_for_reply.get(ADMIN_ID) == user_id:
+        del waiting_for_reply[ADMIN_ID]
+    
+    try:
+        await bot.send_message(user_id, "🛑 Диалог закрыт.")
+    except:
+        pass
+    
+    await callback.message.answer(f"✅ Диалог с {user_id} закрыт")
+    await callback.answer()
+
+@dp.message_handler(lambda m: m.from_user.id == ADMIN_ID)
+async def handle_admin_message(message: types.Message):
+    user_id = waiting_for_reply.pop(ADMIN_ID, None)
+    
+    if not user_id:
+        # Если нет активного ответа — игнорируем
         return
     
     try:
-        await bot.send_message(user_id, f"📨 *Ответ:*\n{text}", parse_mode="Markdown")
+        # Отправляем ответ в зависимости от типа
+        if message.text:
+            await bot.send_message(user_id, f"📨 *Ответ:*\n{message.text}", parse_mode="Markdown")
+        elif message.photo:
+            await bot.send_photo(user_id, message.photo[-1].file_id, caption="📨 *Ответ:*", parse_mode="Markdown")
+        elif message.video:
+            await bot.send_video(user_id, message.video.file_id, caption="📨 *Ответ:*", parse_mode="Markdown")
+        elif message.document:
+            await bot.send_document(user_id, message.document.file_id, caption="📨 *Ответ:*", parse_mode="Markdown")
+        elif message.voice:
+            await bot.send_voice(user_id, message.voice.file_id)
+        else:
+            await bot.send_message(user_id, "📨 *Ответ:*", parse_mode="Markdown")
+        
         await message.answer(f"✅ Отправлено пользователю {user_id}")
+        
+        # Предлагаем закрыть диалог
+        kb = InlineKeyboardMarkup(row_width=1)
+        kb.add(InlineKeyboardButton("✅ Закрыть диалог", callback_data=f"close_{user_id}"))
+        await message.answer("Диалог завершен? Нажми кнопку:", reply_markup=kb)
+        
     except Exception as e:
         await message.answer(f"❌ Ошибка: {e}")
 
