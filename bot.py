@@ -14,7 +14,7 @@ logging.basicConfig(level=logging.INFO)
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(bot)
 
-waiting_for_reply = {}  # {admin_id: user_id}
+waiting_for_reply = {}
 
 def admin_keyboard(user_id):
     kb = InlineKeyboardMarkup(row_width=1)
@@ -28,13 +28,6 @@ def admin_keyboard(user_id):
 async def start(message: types.Message):
     await message.answer("👋 Бот поддержки. Отправь сообщение, я передам админу.")
 
-@dp.message_handler(commands=['test'])
-async def test(message: types.Message):
-    if message.from_user.id != ADMIN_ID:
-        return
-    user_id = waiting_for_reply.get(ADMIN_ID, "никого")
-    await message.answer(f"Сейчас ожидаю ответ для: {user_id}")
-
 @dp.message_handler(commands=['send'])
 async def send_to_user(message: types.Message):
     if message.from_user.id != ADMIN_ID:
@@ -47,7 +40,7 @@ async def send_to_user(message: types.Message):
         user_id = int(parts[1])
         text = parts[2]
         await bot.send_message(user_id, f"📨 {text}")
-        await message.answer(f"✅ Отправлено пользователю {user_id}")
+        await message.answer(f"✅ Отправлено")
     except Exception as e:
         await message.answer(f"❌ Ошибка: {e}")
 
@@ -67,23 +60,15 @@ async def handle_user(message: types.Message):
         await bot.send_photo(ADMIN_ID, message.photo[-1].file_id, caption=text, reply_markup=admin_keyboard(user.id))
     elif message.video:
         await bot.send_video(ADMIN_ID, message.video.file_id, caption=text, reply_markup=admin_keyboard(user.id))
-    elif message.document:
-        await bot.send_document(ADMIN_ID, message.document.file_id, caption=text, reply_markup=admin_keyboard(user.id))
-    elif message.voice:
-        await bot.send_voice(ADMIN_ID, message.voice.file_id, caption=text, reply_markup=admin_keyboard(user.id))
 
 @dp.callback_query_handler(lambda c: c.data.startswith('reply_'))
 async def reply_start(callback: types.CallbackQuery):
-    print(f"🔍 Нажата кнопка reply: {callback.data}")
-    
     if callback.from_user.id != ADMIN_ID:
         await callback.answer("Нет доступа", show_alert=True)
         return
     
     user_id = int(callback.data.split('_')[1])
     waiting_for_reply[ADMIN_ID] = user_id
-    
-    print(f"✅ Сохранено: waiting_for_reply[{ADMIN_ID}] = {user_id}")
     
     await callback.message.answer(f"✍️ Введите ответ для пользователя {user_id}:")
     await callback.answer()
@@ -109,20 +94,14 @@ async def close_dialog(callback: types.CallbackQuery):
 
 @dp.message_handler(lambda m: m.from_user.id == ADMIN_ID)
 async def handle_admin_message(message: types.Message):
-    print(f"🔍 Сообщение от админа: {message.text}")
-    
-    # Проверяем, есть ли ожидающий ответ
     if ADMIN_ID in waiting_for_reply:
         user_id = waiting_for_reply.pop(ADMIN_ID)
-        print(f"✅ Отправляем ответ пользователю {user_id}")
         
         try:
             if message.text:
                 await bot.send_message(user_id, f"📨 Ответ: {message.text}")
             elif message.photo:
                 await bot.send_photo(user_id, message.photo[-1].file_id, caption="📨 Ответ:")
-            elif message.video:
-                await bot.send_video(user_id, message.video.file_id, caption="📨 Ответ:")
             else:
                 await bot.send_message(user_id, "📨 Ответ получен")
             
@@ -134,10 +113,6 @@ async def handle_admin_message(message: types.Message):
             
         except Exception as e:
             await message.answer(f"❌ Ошибка: {e}")
-    else:
-        # Если нет ожидающего ответа, просто игнорируем
-        if message.text and not message.text.startswith('/'):
-            print(f"⚠️ Нет ожидающего ответа, сообщение проигнорировано")
 
 if __name__ == '__main__':
     print("🤖 Бот запущен!")
