@@ -44,10 +44,7 @@ def admin_keyboard(user_id):
 async def start(message: types.Message):
     await message.answer(
         "👋 Бот поддержки.\n\n"
-        "Отправь сообщение, я передам админу.\n\n"
-        "Админ может ответить:\n"
-        "1. Нажать 'Ответить' под сообщением\n"
-        "2. Использовать /send 123456789 текст"
+        "Отправь сообщение, я передам админу."
     )
 
 @dp.message_handler(commands=['test'])
