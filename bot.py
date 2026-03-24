@@ -38,8 +38,8 @@ async def start(message: types.Message):
         "👋 Бот поддержки.\n\n"
         "Отправь сообщение, я передам админу.\n\n"
         "Админ ответит командой:\n"
-        "/reply текст — последнему, кто писал\n"
-        "/reply 123456789 текст — конкретному пользователю"
+        "/send текст — последнему, кто писал\n"
+        "/send 123456789 текст — конкретному пользователю"
     )
 
 @dp.message_handler(commands=['post'])
@@ -91,34 +91,34 @@ async def handle_user(message: types.Message):
     
     await bot.send_message(
         ADMIN_ID,
-        f"💡 Чтобы ответить:\n/reply {user.id} текст\nили\n/reply текст (ответит последнему)"
+        f"💡 Чтобы ответить:\n/send {user.id} текст\nили\n/send текст (ответит последнему)"
     )
 
-@dp.message_handler(commands=['reply'])
-async def reply_command(message: types.Message):
+@dp.message_handler(commands=['send'])
+async def send_command(message: types.Message):
     if message.from_user.id != ADMIN_ID:
         return
     
     parts = message.text.split(maxsplit=2)
     
-    # /reply текст
+    # /send текст
     if len(parts) == 2:
         user_id = last_user.get(ADMIN_ID)
         text = parts[1]
         if not user_id:
-            await message.answer("❌ Нет активного диалога. Используй: /reply user_id текст")
+            await message.answer("❌ Нет активного диалога. Используй: /send user_id текст")
             return
     
-    # /reply user_id текст
+    # /send user_id текст
     elif len(parts) >= 3:
         try:
             user_id = int(parts[1])
             text = parts[2]
         except:
-            await message.answer("❌ Ошибка. Используй: /reply user_id текст")
+            await message.answer("❌ Ошибка. Используй: /send user_id текст")
             return
     else:
-        await message.answer("❌ Используй:\n/reply текст\nили\n/reply 123456789 текст")
+        await message.answer("❌ Используй:\n/send текст\nили\n/send 123456789 текст")
         return
     
     try:
